@@ -1,0 +1,30 @@
+{
+  "tests": [
+    {
+      "name": "Test user registration",
+      "method": "POST",
+      "body": {
+        "action": "register",
+        "phoneNumber": "+79991234567",
+        "username": "testuser",
+        "displayName": "Test User",
+        "promoCode": ""
+      },
+      "expectedStatus": 200,
+      "expectedBody": {
+        "userId": "number"
+      },
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Test search user",
+      "method": "POST",
+      "body": {
+        "action": "searchUser",
+        "query": "testuser"
+      },
+      "expectedStatus": 200,
+      "bodyMatcher": "partial"
+    }
+  ]
+}

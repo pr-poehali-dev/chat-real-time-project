@@ -1,19 +1,21 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
 import Icon from '@/components/ui/icon';
 import { toast } from 'sonner';
+
+const API_URL = 'https://functions.poehali.dev/8dbf96a3-52e4-4b36-8b8b-1d5e3448c13e';
 
 type Screen = 'auth' | 'chats' | 'search' | 'channels' | 'profile' | 'settings' | 'chat';
 
 interface Chat {
   id: string;
+  userId: number;
   name: string;
   username: string;
   avatar: string;
@@ -25,8 +27,8 @@ interface Chat {
 
 interface Message {
   id: string;
+  senderId: number;
   text: string;
-  sent: boolean;
   time: string;
 }
 
@@ -38,78 +40,176 @@ const Index = () => {
   const [promoCode, setPromoCode] = useState('');
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<{id: number; phoneNumber: string; username: string; displayName: string; avatarUrl: string | null}[]>([]);
   const [activeChat, setActiveChat] = useState<Chat | null>(null);
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [messageInput, setMessageInput] = useState('');
   const [isDeveloper, setIsDeveloper] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<number | null>(null);
+  const [chats, setChats] = useState<Chat[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const mockChats: Chat[] = [
-    {
-      id: '1',
-      name: 'Анна Иванова',
-      username: '@anna_iv',
-      avatar: '',
-      lastMessage: 'Привет! Как дела?',
-      time: '14:32',
-      unread: 2,
-      online: true,
-    },
-    {
-      id: '2',
-      name: 'Максим',
-      username: '@max_dev',
-      avatar: '',
-      lastMessage: 'Отправил файлы',
-      time: '12:15',
-      unread: 0,
-      online: false,
-    },
-    {
-      id: '3',
-      name: 'Мария',
-      username: '@maria_design',
-      avatar: '',
-      lastMessage: 'Посмотри новый дизайн',
-      time: 'Вчера',
-      unread: 5,
-      online: true,
-    },
-  ];
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
 
-  const mockMessages: Message[] = [
-    { id: '1', text: 'Привет!', sent: false, time: '14:30' },
-    { id: '2', text: 'Как дела?', sent: false, time: '14:32' },
-    { id: '3', text: 'Отлично, спасибо!', sent: true, time: '14:33' },
-    { id: '4', text: 'А у тебя?', sent: true, time: '14:33' },
-  ];
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
 
-  const handleRegister = () => {
+  useEffect(() => {
+    const loadChatsEffect = async () => {
+      if (!currentUserId) return;
+      try {
+        const result = await apiCall('getChats', { userId: currentUserId });
+        setChats(result);
+      } catch (error) {
+        console.error('Error loading chats:', error);
+      }
+    };
+    if (screen === 'chats' && currentUserId) {
+      loadChatsEffect();
+    }
+  }, [screen, currentUserId]);
+
+  useEffect(() => {
+    const loadMessagesEffect = async () => {
+      if (!activeChatId) return;
+      try {
+        const result = await apiCall('getMessages', { chatId: activeChatId });
+        setMessages(result);
+      } catch (error) {
+        console.error('Error loading messages:', error);
+      }
+    };
+    if (activeChatId && currentUserId) {
+      loadMessagesEffect();
+      const interval = setInterval(loadMessagesEffect, 2000);
+      return () => clearInterval(interval);
+    }
+  }, [activeChatId, currentUserId]);
+
+  const apiCall = async (action: string, data: Record<string, unknown>) => {
+    const response = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, ...data }),
+    });
+    return response.json();
+  };
+
+  const handleRegister = async () => {
     if (!phoneNumber || !userName || !username) {
       toast.error('Заполните все поля');
       return;
     }
-    if (promoCode === 'super123q') {
-      setIsDeveloper(true);
-      toast.success('🎉 Промокод активирован! Получена галочка разработчика');
+
+    try {
+      const result = await apiCall('register', {
+        phoneNumber,
+        username,
+        displayName: userName,
+        promoCode,
+      });
+
+      setCurrentUserId(result.userId);
+      setIsDeveloper(result.isDeveloper);
+
+      if (result.isDeveloper) {
+        toast.success('🎉 Промокод активирован! Получена галочка разработчика');
+      } else {
+        toast.success('Регистрация успешна!');
+      }
+
+      setScreen('chats');
+    } catch (error) {
+      toast.error('Ошибка регистрации');
     }
-    toast.success('Регистрация успешна!');
-    setScreen('chats');
+  };
+
+
+
+  const loadMessages = async () => {
+    if (!activeChatId) return;
+    try {
+      const result = await apiCall('getMessages', { chatId: activeChatId });
+      setMessages(result);
+    } catch (error) {
+      console.error('Error loading messages:', error);
+    }
+  };
+
+  useEffect(() => {
+    const searchUsers = async () => {
+      if (!searchQuery.trim()) {
+        setSearchResults([]);
+        return;
+      }
+
+      try {
+        const result = await apiCall('searchUser', { query: searchQuery });
+        setSearchResults(result.filter((u: {id: number}) => u.id !== currentUserId));
+      } catch (error) {
+        toast.error('Ошибка поиска');
+      }
+    };
+    const timer = setTimeout(searchUsers, 500);
+    return () => clearTimeout(timer);
+  }, [searchQuery, currentUserId]);
+
+  const openChat = async (chat: Chat) => {
+    try {
+      const result = await apiCall('getOrCreateChat', {
+        user1Id: currentUserId,
+        user2Id: chat.userId,
+      });
+
+      setActiveChat(chat);
+      setActiveChatId(result.chatId);
+      setScreen('chat');
+    } catch (error) {
+      toast.error('Ошибка открытия чата');
+    }
+  };
+
+  const openChatFromSearch = async (user: {id: number; displayName: string; username: string; avatarUrl: string | null}) => {
+    const chat: Chat = {
+      id: '',
+      userId: user.id,
+      name: user.displayName,
+      username: user.username,
+      avatar: user.avatarUrl || '',
+      lastMessage: '',
+      time: '',
+      unread: 0,
+      online: false,
+    };
+
+    await openChat(chat);
+  };
+
+  const sendMessage = async () => {
+    if (!messageInput.trim() || !activeChatId) return;
+
+    try {
+      await apiCall('sendMessage', {
+        chatId: activeChatId,
+        senderId: currentUserId,
+        messageText: messageInput,
+      });
+
+      setMessageInput('');
+      await loadMessages();
+    } catch (error) {
+      toast.error('Ошибка отправки сообщения');
+    }
   };
 
   const toggleTheme = () => {
     setIsDarkMode(!isDarkMode);
     document.documentElement.classList.toggle('dark');
     toast.success(isDarkMode ? 'Светлая тема' : 'Темная тема');
-  };
-
-  const openChat = (chat: Chat) => {
-    setActiveChat(chat);
-    setScreen('chat');
-  };
-
-  const sendMessage = () => {
-    if (!messageInput.trim()) return;
-    toast.success('Сообщение отправлено');
-    setMessageInput('');
   };
 
   if (screen === 'auth') {
@@ -195,10 +295,7 @@ const Index = () => {
           </Avatar>
           <div className="flex-1">
             <div className="font-semibold">{activeChat.name}</div>
-            <div className="text-xs text-muted-foreground flex items-center gap-1">
-              {activeChat.online && <span className="w-2 h-2 rounded-full bg-green-500" />}
-              {activeChat.online ? 'онлайн' : 'был(а) недавно'}
-            </div>
+            <div className="text-xs text-muted-foreground">{activeChat.username}</div>
           </div>
           <Button variant="ghost" size="icon">
             <Icon name="MoreVertical" size={20} />
@@ -207,23 +304,27 @@ const Index = () => {
 
         <ScrollArea className="flex-1 p-4">
           <div className="space-y-3">
-            {mockMessages.map((msg) => (
-              <div
-                key={msg.id}
-                className={`flex ${msg.sent ? 'justify-end' : 'justify-start'} animate-fade-in`}
-              >
+            {messages.map((msg) => {
+              const isSent = msg.senderId === currentUserId;
+              return (
                 <div
-                  className={`max-w-[70%] rounded-2xl px-4 py-2 ${
-                    msg.sent
-                      ? 'bg-primary text-primary-foreground rounded-br-sm'
-                      : 'bg-muted rounded-bl-sm'
-                  }`}
+                  key={msg.id}
+                  className={`flex ${isSent ? 'justify-end' : 'justify-start'} animate-fade-in`}
                 >
-                  <p className="text-sm">{msg.text}</p>
-                  <span className="text-xs opacity-70 mt-1 block">{msg.time}</span>
+                  <div
+                    className={`max-w-[70%] rounded-2xl px-4 py-2 ${
+                      isSent
+                        ? 'bg-primary text-primary-foreground rounded-br-sm'
+                        : 'bg-muted rounded-bl-sm'
+                    }`}
+                  >
+                    <p className="text-sm">{msg.text}</p>
+                    <span className="text-xs opacity-70 mt-1 block">{msg.time}</span>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
+            <div ref={messagesEndRef} />
           </div>
         </ScrollArea>
 
@@ -282,47 +383,76 @@ const Index = () => {
       <ScrollArea className="flex-1">
         {screen === 'chats' && (
           <div className="divide-y animate-fade-in">
-            {mockChats.map((chat, idx) => (
-              <div
-                key={chat.id}
-                onClick={() => openChat(chat)}
-                className="p-4 hover:bg-muted/50 cursor-pointer transition-all duration-200 hover:scale-[1.01]"
-                style={{ animationDelay: `${idx * 50}ms` }}
-              >
-                <div className="flex items-start gap-3">
-                  <div className="relative">
-                    <Avatar className="w-12 h-12">
-                      <AvatarFallback className="bg-gradient-to-br from-primary to-secondary text-white font-semibold">
-                        {chat.name[0]}
-                      </AvatarFallback>
-                    </Avatar>
-                    {chat.online && (
-                      <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border-2 border-background" />
-                    )}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="font-semibold truncate">{chat.name}</span>
-                      <span className="text-xs text-muted-foreground">{chat.time}</span>
+            {chats.length === 0 ? (
+              <div className="p-8 text-center text-muted-foreground">
+                <Icon name="MessageCircle" size={48} className="mx-auto mb-4 opacity-50" />
+                <p>Нет чатов</p>
+                <p className="text-sm mt-2">Найдите пользователя через поиск</p>
+              </div>
+            ) : (
+              chats.map((chat, idx) => (
+                <div
+                  key={chat.id}
+                  onClick={() => openChat(chat)}
+                  className="p-4 hover:bg-muted/50 cursor-pointer transition-all duration-200 hover:scale-[1.01]"
+                  style={{ animationDelay: `${idx * 50}ms` }}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="relative">
+                      <Avatar className="w-12 h-12">
+                        <AvatarFallback className="bg-gradient-to-br from-primary to-secondary text-white font-semibold">
+                          {chat.name[0]}
+                        </AvatarFallback>
+                      </Avatar>
                     </div>
-                    <div className="flex items-center justify-between">
-                      <p className="text-sm text-muted-foreground truncate">{chat.lastMessage}</p>
-                      {chat.unread > 0 && (
-                        <Badge className="bg-primary text-xs ml-2">{chat.unread}</Badge>
-                      )}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-semibold truncate">{chat.name}</span>
+                        <span className="text-xs text-muted-foreground">{chat.time}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm text-muted-foreground truncate">{chat.lastMessage}</p>
+                        {chat.unread > 0 && (
+                          <Badge className="bg-primary text-xs ml-2">{chat.unread}</Badge>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         )}
 
         {screen === 'search' && (
           <div className="p-4 animate-fade-in">
-            <p className="text-center text-muted-foreground py-8">
-              Введите номер телефона или username для поиска
-            </p>
+            {searchResults.length === 0 ? (
+              <p className="text-center text-muted-foreground py-8">
+                {searchQuery ? 'Ничего не найдено' : 'Введите номер телефона или username для поиска'}
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {searchResults.map((user) => (
+                  <Card
+                    key={user.id}
+                    className="p-4 cursor-pointer hover:bg-muted/50 transition-all"
+                    onClick={() => openChatFromSearch(user)}
+                  >
+                    <div className="flex items-center gap-3">
+                      <Avatar className="w-12 h-12">
+                        <AvatarFallback className="bg-gradient-to-br from-primary to-secondary text-white">
+                          {user.displayName[0]}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div>
+                        <div className="font-semibold">{user.displayName}</div>
+                        <div className="text-sm text-muted-foreground">{user.username}</div>
+                      </div>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
